@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing Bola Sederhana</title>
+    <title>Demo Ray Tracing Bola Kecil (Satu File)</title>
     <style>
         body {
             display: flex;
@@ -22,12 +22,134 @@
     </style>
 </head>
 <body>
-    <h1>Demo Ray Tracing Bola Sederhana</h1>
-    <p>Menampilkan bola merah di tengah menggunakan kalkulasi intersection ray.</p>
+    <h1>Demo Ray Tracing Bola Sederhana (Kecil)</h1>
+    <p>Menampilkan bola merah (lebih kecil) di tengah menggunakan kalkulasi intersection ray.</p>
     <canvas id="rayCanvas" width="500" height="500"></canvas>
 
-    <!-- Penting: helper.js harus dimuat SEBELUM script.js -->
-    <script src="helper.js"></script>
-    <script src="script.js"></script>
+    <script>
+        // --- Bagian Helper (sebelumnya helper.js) ---
+        // Fungsi Bantuan untuk Vektor 3D
+
+        // Menambahkan dua vektor
+        function add(v1, v2) {
+            return { x: v1.x + v2.x, y: v1.y + v2.y, z: v1.z + v2.z };
+        }
+
+        // Mengurangkan vektor v2 dari v1
+        function subtract(v1, v2) {
+            return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z };
+        }
+
+        // Mengalikan vektor dengan skalar
+        function multiplyScalar(v, s) {
+            return { x: v.x * s, y: v.y * s, z: v.z * s };
+        }
+
+        // Menghitung dot product dua vektor
+        function dot(v1, v2) {
+            return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+        }
+
+        // Menghitung kuadrat panjang (magnitude) vektor (lebih cepat dari length)
+        function lengthSquared(v) {
+            return v.x * v.x + v.y * v.y + v.z * v.z;
+        }
+
+        // Menghitung panjang (magnitude) vektor
+        function length(v) {
+            return Math.sqrt(lengthSquared(v));
+        }
+
+        // Menghasilkan vektor satuan (panjang = 1)
+        function normalize(v) {
+            const len = length(v);
+            if (len === 0) {
+                return { x: 0, y: 0, z: 0 }; // Hindari pembagian dengan nol
+            }
+            return multiplyScalar(v, 1 / len);
+        }
+        // --- Akhir Bagian Helper ---
+
+
+        // --- Bagian Script Utama (sebelumnya script.js) ---
+        // Tunggu hingga DOM siap
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('rayCanvas');
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+
+            // --- Definisi Scene ---
+            const camera = {
+                origin: { x: 0, y: 0, z: -3 }, // Posisi kamera sedikit di depan layar
+            };
+
+            const sphere = {
+                center: { x: 0, y: 0, z: 0 }, // Pusat bola di tengah scene
+                radius: 0.5,                  // <<<=== RADIUS DIPERKECIL DARI 1.0 MENJADI 0.5
+                color: { r: 255, g: 0, b: 0 } // Warna bola (merah)
+            };
+
+            const backgroundColor = { r: 135, g: 206, b: 250 }; // Warna latar belakang (biru langit)
+
+            // --- Fungsi Ray-Sphere Intersection ---
+            // Mengembalikan nilai t (jarak) jika ada intersection, atau null jika tidak
+            function intersectSphere(rayOrigin, rayDirection, sphere) {
+                const oc = subtract(rayOrigin, sphere.center);
+                const a = dot(rayDirection, rayDirection);
+                const b = 2.0 * dot(oc, rayDirection);
+                const c = dot(oc, oc) - sphere.radius * sphere.radius;
+                const discriminant = b * b - 4 * a * c;
+
+                if (discriminant < 0) {
+                    return null;
+                } else {
+                    const t1 = (-b - Math.sqrt(discriminant)) / (2.0 * a);
+                    const t2 = (-b + Math.sqrt(discriminant)) / (2.0 * a);
+
+                    if (t1 > 0.001) return t1;
+                    if (t2 > 0.001) return t2;
+
+                    return null;
+                }
+            }
+
+            // --- Proses Rendering ---
+            function render() {
+                const imageData = ctx.createImageData(width, height);
+                const data = imageData.data;
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const viewportX = (2 * (x + 0.5) / width - 1.0);
+                        const viewportY = (1.0 - 2 * (y + 0.5) / height);
+
+                        const pixelPosWorld = { x: viewportX, y: viewportY, z: 0 };
+                        const rayDirection = normalize(subtract(pixelPosWorld, camera.origin));
+
+                        const intersectionT = intersectSphere(camera.origin, rayDirection, sphere);
+
+                        let pixelColor = backgroundColor;
+                        if (intersectionT !== null) {
+                            pixelColor = sphere.color;
+                        }
+
+                        const index = (y * width + x) * 4;
+                        data[index]     = pixelColor.r; // R
+                        data[index + 1] = pixelColor.g; // G
+                        data[index + 2] = pixelColor.b; // B
+                        data[index + 3] = 255;          // A
+                    }
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+                console.log("Rendering complete.");
+            }
+
+            // Mulai rendering
+            render();
+        });
+         // --- Akhir Bagian Script Utama ---
+    </script>
 </body>
 </html>
