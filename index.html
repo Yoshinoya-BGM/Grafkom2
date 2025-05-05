@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing Bola Kecil (Satu File)</title>
+    <title>Demo Ray Tracing Dua Bola (Overlap)</title>
     <style>
         body {
             display: flex;
@@ -22,57 +22,27 @@
     </style>
 </head>
 <body>
-    <h1>Demo Ray Tracing Bola Sederhana</h1>
-    <p>Menampilkan bola merah di tengah menggunakan kalkulasi intersection ray.</p>
+    <h1>Demo Ray Tracing Dua Bola (Overlap)</h1>
+    <p>Menampilkan dua bola (merah dan biru) yang tumpang tindih.</p>
     <canvas id="rayCanvas" width="500" height="500"></canvas>
 
     <script>
-        // --- Bagian Helper (sebelumnya helper.js) ---
-        // Fungsi Bantuan untuk Vektor 3D
-
-        // Menambahkan dua vektor
-        function add(v1, v2) {
-            return { x: v1.x + v2.x, y: v1.y + v2.y, z: v1.z + v2.z };
-        }
-
-        // Mengurangkan vektor v2 dari v1
-        function subtract(v1, v2) {
-            return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z };
-        }
-
-        // Mengalikan vektor dengan skalar
-        function multiplyScalar(v, s) {
-            return { x: v.x * s, y: v.y * s, z: v.z * s };
-        }
-
-        // Menghitung dot product dua vektor
-        function dot(v1, v2) {
-            return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
-        }
-
-        // Menghitung kuadrat panjang (magnitude) vektor (lebih cepat dari length)
-        function lengthSquared(v) {
-            return v.x * v.x + v.y * v.y + v.z * v.z;
-        }
-
-        // Menghitung panjang (magnitude) vektor
-        function length(v) {
-            return Math.sqrt(lengthSquared(v));
-        }
-
-        // Menghasilkan vektor satuan (panjang = 1)
+        // --- Bagian Helper (Vektor) ---
+        function add(v1, v2) { return { x: v1.x + v2.x, y: v1.y + v2.y, z: v1.z + v2.z }; }
+        function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
+        function multiplyScalar(v, s) { return { x: v.x * s, y: v.y * s, z: v.z * s }; }
+        function dot(v1, v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
+        function lengthSquared(v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+        function length(v) { return Math.sqrt(lengthSquared(v)); }
         function normalize(v) {
             const len = length(v);
-            if (len === 0) {
-                return { x: 0, y: 0, z: 0 }; // Hindari pembagian dengan nol
-            }
+            if (len === 0) return { x: 0, y: 0, z: 0 };
             return multiplyScalar(v, 1 / len);
         }
         // --- Akhir Bagian Helper ---
 
 
-        // --- Bagian Script Utama (sebelumnya script.js) ---
-        // Tunggu hingga DOM siap
+        // --- Bagian Script Utama ---
         document.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('rayCanvas');
             const ctx = canvas.getContext('2d');
@@ -81,22 +51,35 @@
 
             // --- Definisi Scene ---
             const camera = {
-                origin: { x: 0, y: 0, z: -3 }, // Posisi kamera sedikit di depan layar
+                origin: { x: 0, y: 0, z: -3 },
             };
 
-            const sphere = {
-                center: { x: 0, y: 0, z: 0 }, // Pusat bola di tengah scene
-                radius: 0.5,                  // <<<=== RADIUS DIPERKECIL DARI 1.0 MENJADI 0.5
-                color: { r: 255, g: 0, b: 0 } // Warna bola (merah)
+            // Bola 1 (Merah, sedikit ke kiri)
+            const sphere1 = {
+                // === POSISI DIUBAH AGAR LEBIH DEKAT ===
+                center: { x: -0.3, y: 0.1, z: 0 },
+                radius: 0.5,
+                color: { r: 255, g: 0, b: 0 } // Merah
             };
 
-            const backgroundColor = { r: 135, g: 206, b: 250 }; // Warna latar belakang (biru langit)
+            // Bola 2 (Biru, sedikit ke kanan, lebih dekat)
+            const sphere2 = {
+                // === POSISI DIUBAH AGAR LEBIH DEKAT ===
+                center: { x: 0.3, y: -0.1, z: -0.5 }, // Z lebih kecil -> lebih dekat
+                radius: 0.4,
+                color: { r: 0, g: 0, b: 255 } // Biru
+            };
+
+            // Masukkan semua objek ke dalam array
+            const sceneObjects = [sphere1, sphere2];
+
+            const backgroundColor = { r: 135, g: 206, b: 250 }; // Biru langit
 
             // --- Fungsi Ray-Sphere Intersection ---
-            // Mengembalikan nilai t (jarak) jika ada intersection, atau null jika tidak
+            // (Tidak perlu diubah dari versi sebelumnya)
             function intersectSphere(rayOrigin, rayDirection, sphere) {
                 const oc = subtract(rayOrigin, sphere.center);
-                const a = dot(rayDirection, rayDirection);
+                const a = dot(rayDirection, rayDirection); // ~1.0 for normalized rays
                 const b = 2.0 * dot(oc, rayDirection);
                 const c = dot(oc, oc) - sphere.radius * sphere.radius;
                 const discriminant = b * b - 4 * a * c;
@@ -104,15 +87,20 @@
                 if (discriminant < 0) {
                     return null;
                 } else {
+                    // Calculate the two potential intersection points (t values)
                     const t1 = (-b - Math.sqrt(discriminant)) / (2.0 * a);
                     const t2 = (-b + Math.sqrt(discriminant)) / (2.0 * a);
 
-                    if (t1 > 0.001) return t1;
-                    if (t2 > 0.001) return t2;
+                    // Return the closest intersection point that is in front of the camera (t > epsilon)
+                    // A small epsilon (0.001) helps avoid self-intersection issues
+                    const epsilon = 0.001;
+                    if (t1 > epsilon && (t2 <= epsilon || t1 < t2)) return t1;
+                    if (t2 > epsilon) return t2;
 
-                    return null;
+                    return null; // Both intersections are behind or too close
                 }
             }
+
 
             // --- Proses Rendering ---
             function render() {
@@ -121,32 +109,50 @@
 
                 for (let y = 0; y < height; y++) {
                     for (let x = 0; x < width; x++) {
+                        // Convert pixel coordinate to viewport coordinate (-1 to 1)
                         const viewportX = (2 * (x + 0.5) / width - 1.0);
-                        const viewportY = (1.0 - 2 * (y + 0.5) / height);
+                        const viewportY = (1.0 - 2 * (y + 0.5) / height); // Y is inverted
 
-                        const pixelPosWorld = { x: viewportX, y: viewportY, z: 0 };
+                        // Define ray direction from camera origin through the viewport point
+                        const pixelPosWorld = { x: viewportX, y: viewportY, z: 0 }; // Target point on z=0 plane
                         const rayDirection = normalize(subtract(pixelPosWorld, camera.origin));
 
-                        const intersectionT = intersectSphere(camera.origin, rayDirection, sphere);
+                        // Find the closest intersection
+                        let closestT = Infinity;
+                        let hitObject = null;
 
-                        let pixelColor = backgroundColor;
-                        if (intersectionT !== null) {
-                            pixelColor = sphere.color;
+                        for (const object of sceneObjects) {
+                            if (object.radius !== undefined) { // Check if it's a sphere
+                                const t = intersectSphere(camera.origin, rayDirection, object);
+                                if (t !== null && t < closestT) {
+                                    closestT = t;
+                                    hitObject = object;
+                                }
+                            }
+                            // Add checks for other object types here if needed
                         }
 
+                        // Determine pixel color
+                        let pixelColor = backgroundColor;
+                        if (hitObject !== null) {
+                            pixelColor = hitObject.color; // Color with the closest hit object's color
+                        }
+
+                        // Set pixel data in ImageData
                         const index = (y * width + x) * 4;
-                        data[index]     = pixelColor.r; // R
-                        data[index + 1] = pixelColor.g; // G
-                        data[index + 2] = pixelColor.b; // B
-                        data[index + 3] = 255;          // A
+                        data[index]     = pixelColor.r;
+                        data[index + 1] = pixelColor.g;
+                        data[index + 2] = pixelColor.b;
+                        data[index + 3] = 255; // Alpha
                     }
                 }
 
+                // Draw the image data to the canvas
                 ctx.putImageData(imageData, 0, 0);
                 console.log("Rendering complete.");
             }
 
-            // Mulai rendering
+            // Start rendering
             render();
         });
          // --- Akhir Bagian Script Utama ---
