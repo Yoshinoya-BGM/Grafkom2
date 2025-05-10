@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo Ray Tracing - Phong Lighting, Plane, Shadows & Reflections</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f0f0;
+            margin: 0;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 1px solid black;
+            background-color: white; /* Warna default jika JS gagal */
+        }
+    </style>
+</head>
+<body>
+    <h1>Demo Ray Tracing (Phong, Plane, Shadows & Floor Reflections)</h1>
+    <p>Menampilkan dua bola, plane reflektif dengan bayangan, dan refleksi hingga 5 pantulan.</p>
+    <canvas id="rayCanvas" width="500" height="500"></canvas>
+
+    <script>
+        // --- Bagian Helper (Vektor & Warna) --- (Sama seperti sebelumnya)
+        function add(v1, v2) { return { x: v1.x + v2.x, y: v1.y + v2.y, z: v1.z + v2.z }; }
+        function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
+        function multiplyScalar(v, s) { return { x: v.x * s, y: v.y * s, z: v.z * s }; }
+        function dot(v1, v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
+        function lengthSquared(v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+        function length(v) { return Math.sqrt(lengthSquared(v)); }
+        function normalize(v) {
+            const len = length(v);
+            if (len === 0) return { x: 0, y: 0, z: 0 };
+            return multiplyScalar(v, 1 / len);
+        }
+        function multiplyColors(c1, c2) { return { r: c1.r * c2.r, g: c1.g * c2.g, b: c1.b * c2.b }; }
+        function addColors(c1, c2) { return { r: c1.r + c2.r, g: c1.g + c2.g, b: c1.b + c2.b }; }
+        function scaleColor(c, s) { return { r: c.r * s, g: c.g * s, b: c.b * s }; }
+        function clampColor(c, min = 0, max = 1) {
+             return {
+                 r: Math.max(min, Math.min(max, c.r)),
+                 g: Math.max(min, Math.min(max, c.g)),
+                 b: Math.max(min, Math.min(max, c.b))
+             };
+        }
+        // --- Akhir Bagian Helper ---
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.getElementById('rayCanvas');
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            const epsilon = 0.0001;
+
+            // --- Definisi Scene ---
+            const camera = {
+                origin: { x: 0, y: 0.7, z: -4 }, // Naikkan kamera sedikit lagi untuk refleksi yg lebih baik
+            };
+
+            const light = {
+                direction: normalize({ x: 0.6, y: -0.7, z: -0.8 }),
+                color: { r: 1.0, g: 1.0, b: 1.0 }
+            };
+            const ambientLight = { r: 0.1, g: 0.1, b: 0.1 }; // Kurangi ambient agar refleksi lebih menonjol
+
+            const sphere1 = {
+                type: 'sphere',
+                center: { x: -0.8, y: 0, z: -1.5 },
+                radius: 0.5,
+                material: {
+                    diffuseColor: { r: 1.0, g: 0.3, b: 0.3 }, // Merah
+                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+                    shininess: 50,
+                    reflectivity: 0.1 // Sedikit reflektif juga
+                }
+            };
+
+            const sphere2 = {
+                type: 'sphere',
+                center: { x: 0.8, y: 0.2, z: -1.0 },
+                radius: 0.4,
+                material: {
+                    diffuseColor: { r: 0.3, g: 0.3, b: 1.0 }, // Biru
+                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+                    shininess: 80,
+                    reflectivity: 0.2 // Sedikit reflektif juga
+                }
+            };
+
+            const floorPlane = {
+                type: 'plane',
+                point: { x: 0, y: -0.5, z: 0 },
+                normal: normalize({ x: 0, y: 1, z: 0 }),
+                material: {
+                    color1: { r: 0.9, g: 0.9, b: 0.9 }, // Abu-abu sangat muda
+                    color2: { r: 0.7, g: 0.7, b: 0.7 }, // Abu-abu sedikit lebih tua
+                    specularColor: { r: 0.5, g: 0.5, b: 0.5 }, // Kilau pada bagian non-reflektif
+                    shininess: 20,
+                    isCheckerboard: true,
+                    checkerScale: 2,
+                    reflectivity: 0.7 // Cukup reflektif
+                }
+            };
+            
+            const ceilingPlane = { // Untuk memantulkan sesuatu di atas
+                type: 'plane',
+                point: {x: 0, y: 3, z:0},
+                normal: normalize({x:0, y: -1, z:0}), // Menghadap ke bawah
+                material: {
+                    diffuseColor: {r:0.6, g:0.6, b:0.8}, // Lavender
+                    specularColor: {r:0,g:0,b:0},
+                    shininess: 1,
+                    reflectivity: 0
+                }
+            };
+
+
+            const sceneObjects = [sphere1, sphere2, floorPlane, ceilingPlane];
+            const backgroundColor = { r: 50, g: 50, b: 80 }; // Background lebih gelap (0-255)
+            const MAX_RECURSION_DEPTH = 5;
+
+            // Konversi warna background ke 0-1 untuk traceRay
+            const backgroundColor01 = {
+                r: backgroundColor.r / 255,
+                g: backgroundColor.g / 255,
+                b: backgroundColor.b / 255
+            };
+
+            function intersectSphere(rayOrigin, rayDirection, sphere) {
+                const oc = subtract(rayOrigin, sphere.center);
+                const a = dot(rayDirection, rayDirection); // selalu 1 jika rayDirection dinormalisasi
+                const b = 2.0 * dot(oc, rayDirection);
+                const c = dot(oc, oc) - sphere.radius * sphere.radius;
+                const discriminant = b * b - 4 * a * c;
+                if (discriminant < 0) return null;
+                const t1 = (-b - Math.sqrt(discriminant)) / (2.0 * a);
+                const t2 = (-b + Math.sqrt(discriminant)) / (2.0 * a);
+                if (t1 > epsilon && (t2 <= epsilon || t1 < t2)) return t1;
+                if (t2 > epsilon) return t2;
+                return null;
+            }
+
+            function intersectPlane(rayOrigin, rayDirection, plane) {
+                const denominator = dot(rayDirection, plane.normal);
+                if (Math.abs(denominator) < epsilon) return null;
+                const t = dot(subtract(plane.point, rayOrigin), plane.normal) / denominator;
+                return (t > epsilon) ? t : null;
+            }
+
+            function traceRay(rayOrigin, rayDirection, depth) {
+                if (depth > MAX_RECURSION_DEPTH) {
+                    return { r: 0, g: 0, b: 0 }; // Batas rekursi, kembalikan hitam
+                }
+
+                let closestT = Infinity;
+                let hitObject = null;
+                let hitObjectIndex = -1;
+
+                sceneObjects.forEach((object, index) => {
+                    let t = null;
+                    if (object.type === 'sphere') {
+                        t = intersectSphere(rayOrigin, rayDirection, object);
+                    } else if (object.type === 'plane') {
+                        t = intersectPlane(rayOrigin, rayDirection, object);
+                    }
+                    if (t !== null && t < closestT) {
+                        closestT = t;
+                        hitObject = object;
+                        hitObjectIndex = index;
+                    }
+                });
+
+                if (hitObject === null) {
+                    return backgroundColor01; // Tidak ada yang kena, kembalikan warna background
+                }
+
+                const hitPoint = add(rayOrigin, multiplyScalar(rayDirection, closestT));
+                const material = hitObject.material;
+                
+                let surfaceNormal;
+                let actualDiffuseColor = material.diffuseColor || {r:0.5,g:0.5,b:0.5}; // Default
+
+                if (hitObject.type === 'sphere') {
+                    surfaceNormal = normalize(subtract(hitPoint, hitObject.center));
+                } else if (hitObject.type === 'plane') {
+                    surfaceNormal = hitObject.normal;
+                    // Jika ray mengenai dari "belakang" normal, balik normalnya agar pencahayaan benar
+                    if (dot(rayDirection, surfaceNormal) > 0) {
+                        surfaceNormal = multiplyScalar(surfaceNormal, -1);
+                    }
+                    if (material.isCheckerboard) {
+                        const u = Math.floor(hitPoint.x * material.checkerScale + 1000.5); // Offset untuk hindari masalah di dekat 0
+                        const v = Math.floor(hitPoint.z * material.checkerScale + 1000.5);
+                        actualDiffuseColor = ((u + v) % 2 === 0) ? material.color1 : material.color2;
+                    }
+                } else { return {r:1,g:0,b:1}; /* Error color */ }
+
+
+                // --- Pencahayaan Lokal (Phong) ---
+                const viewDir = normalize(subtract(rayOrigin, hitPoint));
+
+                // Shadow Calculation
+                let shadowFactor = 1.0;
+                const shadowRayOrigin = add(hitPoint, multiplyScalar(surfaceNormal, epsilon * 10));
+                // Arah shadow ray adalah menuju sumber cahaya (negasi dari light.direction jika light.direction adalah DARI SUMBER)
+                // Tapi kita definisikan light.direction MENJAUHI sumber, jadi shadowRayDirection = light.direction
+                const shadowRayDirection = light.direction; 
+
+                for (let i = 0; i < sceneObjects.length; i++) {
+                    if (i === hitObjectIndex) continue; // Jangan self-shadow
+                    const otherObject = sceneObjects[i];
+                    let tShadow = null;
+                    if (otherObject.type === 'sphere') {
+                        tShadow = intersectSphere(shadowRayOrigin, shadowRayDirection, otherObject);
+                    } else if (otherObject.type === 'plane') {
+                        tShadow = intersectPlane(shadowRayOrigin, shadowRayDirection, otherObject);
+                    }
+                    if (tShadow !== null && tShadow > epsilon) {
+                        shadowFactor = 0.2; // Bayangan lembut
+                        break;
+                    }
+                }
+
+                const ambient = multiplyColors(ambientLight, actualDiffuseColor);
+                let diffuse = { r: 0, g: 0, b: 0 };
+                let specular = { r: 0, g: 0, b: 0 };
+
+                if (shadowFactor > 0.01) {
+                    const NdotL = dot(surfaceNormal, light.direction);
+                    const diffuseIntensity = Math.max(0.0, NdotL);
+                    diffuse = scaleColor(multiplyColors(light.color, actualDiffuseColor), diffuseIntensity * shadowFactor);
+
+                    const matSpecularColor = material.specularColor || { r: 0, g: 0, b: 0 };
+                    const matShininess = material.shininess || 1;
+                    const halfwayDir = normalize(add(light.direction, viewDir));
+                    const NdotH = dot(surfaceNormal, halfwayDir);
+                    const specAngle = Math.max(0.0, NdotH);
+                    const specularIntensity = Math.pow(specAngle, matShininess);
+                    specular = scaleColor(multiplyColors(light.color, matSpecularColor), specularIntensity * shadowFactor);
+                }
+                
+                let localColor = addColors(ambient, addColors(diffuse, specular));
+
+                // --- Kalkulasi Refleksi ---
+                let reflectedColor = { r: 0, g: 0, b: 0 };
+                const reflectivity = material.reflectivity || 0;
+
+                if (reflectivity > 0 && depth < MAX_RECURSION_DEPTH) {
+                    // Vektor datang I = rayDirection
+                    // Vektor refleksi R = I - 2 * N * dot(N, I)
+                    const I = rayDirection;
+                    const N = surfaceNormal; // Pastikan N menunjuk keluar dari permukaan
+                    const NdotI = dot(N, I);
+                    
+                    const reflectionVec = subtract(I, multiplyScalar(N, 2 * NdotI));
+                    const reflectionRayDir = normalize(reflectionVec);
+                    // Offset origin sedikit dari permukaan searah normal
+                    const reflectionRayOrigin = add(hitPoint, multiplyScalar(N, epsilon * 10)); 
+
+                    reflectedColor = traceRay(reflectionRayOrigin, reflectionRayDir, depth + 1);
+                }
+                
+                // Kombinasi warna lokal dan warna refleksi
+                let finalCombinedColor = addColors(
+                    scaleColor(localColor, 1 - reflectivity),
+                    scaleColor(reflectedColor, reflectivity)
+                );
+                
+                return finalCombinedColor; // Warna masih dalam rentang 0-1
+            }
+
+            // --- Proses Rendering Utama ---
+            function render() {
+                const imageData = ctx.createImageData(width, height);
+                const data = imageData.data;
+
+                console.time("renderTime");
+
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const aspectRatio = width / height;
+                        const viewportX = (2 * (x + 0.5) / width - 1.0) * aspectRatio;
+                        const viewportY = (1.0 - 2 * (y + 0.5) / height);
+                        
+                        // View plane 1 unit di depan kamera (focal length = 1)
+                        const targetPointOnViewPlane = { x: viewportX, y: viewportY, z: camera.origin.z + 1 };
+                        const initialRayDirection = normalize(subtract(targetPointOnViewPlane, camera.origin));
+
+                        let colorFromRay = traceRay(camera.origin, initialRayDirection, 0);
+
+                        // Clamp hasil akhir sebelum konversi ke 0-255
+                        colorFromRay = clampColor(colorFromRay, 0.0, 1.0);
+                        
+                        const finalPixelColor = {
+                            r: Math.floor(colorFromRay.r * 255),
+                            g: Math.floor(colorFromRay.g * 255),
+                            b: Math.floor(colorFromRay.b * 255)
+                        };
+
+                        const index = (y * width + x) * 4;
+                        data[index]     = finalPixelColor.r;
+                        data[index + 1] = finalPixelColor.g;
+                        data[index + 2] = finalPixelColor.b;
+                        data[index + 3] = 255; // Alpha
+                    }
+                }
+                ctx.putImageData(imageData, 0, 0);
+                console.timeEnd("renderTime");
+                console.log(`Rendering complete with reflections (max depth: ${MAX_RECURSION_DEPTH}).`);
+            }
+
+            render();
+        });
+    </script>
+</body>
+</html>
