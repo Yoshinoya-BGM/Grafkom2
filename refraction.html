@@ -3,200 +3,219 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing - Phong + Shadows + Reflections + Refraction</title>
+    <title>Demo Ray Tracing - Kaca Interaktif, Merah & Biru Opaque</title>
     <style>
-        body { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; background-color: #f0f0f0; margin: 0; font-family: sans-serif; }
-        canvas { border: 1px solid black; background-color: white; }
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #333; /* Background UI gelap */
+            color: #eee;
+            margin: 0;
+            font-family: sans-serif;
+        }
+        canvas {
+            border: 1px solid #555;
+            background-color: #222; /* Background canvas gelap */
+            margin-bottom: 20px;
+        }
+        .controls {
+            background-color: #282828;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .controls label { font-weight: bold; }
+        .controls input[type="range"] { width: 200px; }
+        .controls span { min-width: 40px; text-align: left; }
     </style>
 </head>
 <body>
-    <h1>Ray Tracing (Phong, Bayangan, Refleksi, Refraksi)</h1>
-    <p>Menampilkan bola bening dengan refraksi.</p>
-    <canvas id="rayCanvas" width="500" height="500"></canvas>
+    <h1>Ray Tracing (Kaca Interaktif, Bola Merah & Biru Opaque)</h1>
+    <canvas id="rayCanvas" width="500" height="400"></canvas> <!-- Ukuran canvas disesuaikan -->
+    <div class="controls">
+        <label for="iorSlider">Glass IoR:</label>
+        <input type="range" id="iorSlider" min="1.0" max="2.5" value="1.5" step="0.01">
+        <span id="iorValue">1.50</span>
+    </div>
 
     <script>
         // --- Helper Vektor & Warna (Sama seperti sebelumnya) ---
         function add(v1,v2){return{x:v1.x+v2.x,y:v1.y+v2.y,z:v1.z+v2.z};}function subtract(v1,v2){return{x:v1.x-v2.x,y:v1.y-v2.y,z:v1.z-v2.z};}function multiplyScalar(v,s){return{x:v.x*s,y:v.y*s,z:v.z*s};}function dot(v1,v2){return v1.x*v2.x+v1.y*v2.y+v1.z*v2.z;}function lengthSquared(v){return v.x*v.x+v.y*v.y+v.z*v.z;}function length(v){return Math.sqrt(lengthSquared(v));}function normalize(v){const l=length(v);if(l===0)return{x:0,y:0,z:0};return multiplyScalar(v,1/l);}function multiplyColors(c1,c2){return{r:c1.r*c2.r,g:c1.g*c2.g,b:c1.b*c2.b};}function addColors(c1,c2){return{r:c1.r+c2.r,g:c1.g+c2.g,b:c1.b+c2.b};}function scaleColor(c,s){return{r:c.r*s,g:c.g*s,b:c.b*s};}function clampColor(c,min=0,max=1){return{r:Math.max(min,Math.min(max,c.r)),g:Math.max(min,Math.min(max,c.g)),b:Math.max(min,Math.min(max,c.b))};}function lerpColor(c1,c2,t){return{r:c1.r*(1-t)+c2.r*t,g:c1.g*(1-t)+c2.g*t,b:c1.b*(1-t)+c2.b*t};}function colorFromRGB(r,g,b){return{r:r/255,g:g/255,b:b/255};}function colorToRGB(c01){return{r:Math.floor(clampColor(c01).r*255),g:Math.floor(clampColor(c01).g*255),b:Math.floor(clampColor(c01).b*255)};}
 
-        // --- Konstanta ---
-        const SHADOW_BIAS = 0.001;
-        const GEOMETRY_BIAS = 0.001; // Untuk refleksi dan refraksi
-        const MAX_RECURSION_DEPTH = 5;
-        const IOR_AIR = 1.0;
+        const SHADOW_BIAS = 0.001; const GEOMETRY_BIAS = 0.001; // GEOMETRY_BIAS untuk refraksi/refleksi
+        const MAX_RECURSION_DEPTH = 5; const IOR_AIR = 1.0;
 
-        let sceneObjects = []; let camera = {}; let light = {}; let ambientLight = {}; let backgroundColor01 = {r:0,g:0,b:0};
+        let sceneObjects = []; let camera = {}; let light = {};
+        let ambientLight = {}; let backgroundColor01 = {r:0,g:0,b:0};
+        let sphereGlassInteractiveRef;
 
         function intersectSphere(ro,rd,s){const oc=subtract(ro,s.center);const a=dot(rd,rd);const b=2.0*dot(oc,rd);const c=dot(oc,oc)-s.radius*s.radius;const d=b*b-4*a*c;if(d<0)return null;const t1=(-b-Math.sqrt(d))/(2.0*a);const t2=(-b+Math.sqrt(d))/(2.0*a);const e=0.0001;if(t1>e&&(t2<=e||t1<t2))return t1;if(t2>e)return t2;return null;}
         function intersectPlane(ro,rd,p){const dn=dot(rd,p.normal);const e=1e-6;if(Math.abs(dn)<e)return null;const t=dot(subtract(p.point,ro),p.normal)/dn;if(t>e)return t;return null;}
 
-        // --- Fungsi Utama Ray Tracing (Rekursif) ---
         function traceRay(rayOrigin, rayDirection, depth) {
             if (depth >= MAX_RECURSION_DEPTH) return { r: 0, g: 0, b: 0 };
-
-            let closestT = Infinity;
-            let hitObject = null;
+            let closestT = Infinity; let hitObject = null;
             for (const object of sceneObjects) {
                 let t = object.material.isPlane ? intersectPlane(rayOrigin, rayDirection, object) : intersectSphere(rayOrigin, rayDirection, object);
                 if (t !== null && t < closestT) { closestT = t; hitObject = object; }
             }
-
             if (hitObject === null) return backgroundColor01;
-
-            const material = hitObject.material;
-            const hitPoint = add(rayOrigin, multiplyScalar(rayDirection, closestT));
+            const material = hitObject.material; const hitPoint = add(rayOrigin, multiplyScalar(rayDirection, closestT));
             const geometricNormal = material.isPlane ? hitObject.normal : normalize(subtract(hitPoint, hitObject.center));
 
-            // --- Jika Material Refraktif (Kaca, Air, dll.) ---
-            if (material.isRefractive) {
-                let finalColor = { r: 0, g: 0, b: 0 };
-                const I = rayDirection; // Vektor insiden (menuju permukaan)
-                let N_shading = geometricNormal; // Normal yang digunakan untuk shading
-                let eta_incident = IOR_AIR;
-                let eta_transmitted = material.ior;
-
-                // Cek apakah ray datang dari dalam objek
-                if (dot(I, geometricNormal) > 0) { // Ray keluar dari objek
-                    eta_incident = material.ior;
-                    eta_transmitted = IOR_AIR;
-                    N_shading = multiplyScalar(geometricNormal, -1); // Normal harus menghadap ke arah ray insiden
+            if (material.isRefractive) { // LOGIKA UNTUK BOLA KACA (REFRAKTIF)
+                const I = rayDirection; let N_shading = geometricNormal;
+                let eta_incident = IOR_AIR; let eta_transmitted = material.ior;
+                if (dot(I, geometricNormal) > 0) {
+                    eta_incident = material.ior; eta_transmitted = IOR_AIR;
+                    N_shading = multiplyScalar(geometricNormal, -1);
                 }
-
-                const eta_ratio = eta_incident / eta_transmitted;
-                const cos_i = -dot(I, N_shading); // cos_i harus >= 0
-
-                // Schlick's approximation for Fresnel reflectance
+                const eta_ratio = eta_incident / eta_transmitted; const cos_i = -dot(I, N_shading);
                 const R0 = Math.pow((eta_incident - eta_transmitted) / (eta_incident + eta_transmitted), 2);
                 const fresnelReflectance = R0 + (1 - R0) * Math.pow(1 - cos_i, 5);
-
-                // Reflected component
                 const R_dir = normalize(subtract(I, multiplyScalar(N_shading, 2 * dot(I, N_shading))));
-                const reflectionRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, GEOMETRY_BIAS)); // Geser dari permukaan asli
-                let reflectedColor = traceRay(reflectionRayOrigin, R_dir, depth + 1);
-
-                // Refracted component (jika tidak ada TIR)
-                let refractedColor = { r: 0, g: 0, b: 0 };
-                const sin2_theta_t = eta_ratio * eta_ratio * (1.0 - cos_i * cos_i);
-
-                if (sin2_theta_t <= 1.0) { // Tidak ada Total Internal Reflection
-                    const cos_theta_t = Math.sqrt(1.0 - sin2_theta_t);
-                    const T_dir_part1 = multiplyScalar(I, eta_ratio);
-                    const T_dir_part2 = multiplyScalar(N_shading, (eta_ratio * cos_i - cos_theta_t));
-                    const T_dir = normalize(add(T_dir_part1, T_dir_part2));
-
-                    const refractionRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, -GEOMETRY_BIAS)); // Geser ke dalam permukaan
-                    let transmittedColor = traceRay(refractionRayOrigin, T_dir, depth + 1);
-                    refractedColor = scaleColor(transmittedColor, 1.0 - fresnelReflectance);
-                    finalColor = addColors(scaleColor(reflectedColor, fresnelReflectance), refractedColor);
-
-                } else { // Total Internal Reflection
-                    finalColor = reflectedColor; // Semua cahaya direfleksikan
-                }
-                return clampColor(finalColor);
-            }
-
-            // --- Jika Material Opaque atau Reflektif Sederhana (Non-Dielektrik) ---
-            let localColor = { r: 0, g: 0, b: 0 };
-            let effectiveDiffuseColor;
-            if (material.isPlane) {
-                const cx = Math.floor(hitPoint.x / material.checkerSize);
-                const cz = Math.floor(hitPoint.z / material.checkerSize);
-                effectiveDiffuseColor = ((cx + cz) % 2 === 0) ? material.color1 : material.color2;
-            } else {
-                effectiveDiffuseColor = material.diffuseColor;
-            }
-
-            localColor = addColors(localColor, multiplyColors(ambientLight, effectiveDiffuseColor));
-
-            let shadowFactor = 1.0;
-            const shadowRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, SHADOW_BIAS));
-            for (const obj of sceneObjects) {
-                if (obj === hitObject) continue;
-                let t_sh = obj.material.isPlane ? intersectPlane(shadowRayOrigin, light.direction, obj) : intersectSphere(shadowRayOrigin, light.direction, obj);
-                if (t_sh !== null && t_sh > 0) { shadowFactor = 0.0; break; }
-            }
-
-            if (shadowFactor > 0) {
-                const V = normalize(subtract(rayOrigin, hitPoint));
-                const L = light.direction;
-                const N = geometricNormal;
-
-                const diffuseIntensity = Math.max(0.0, dot(N, L));
-                localColor = addColors(localColor, scaleColor(multiplyColors(light.color, effectiveDiffuseColor), diffuseIntensity));
-
-                const H = normalize(add(L, V));
-                const specularIntensity = Math.pow(Math.max(0.0, dot(N, H)), material.shininess);
-                localColor = addColors(localColor, scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity));
-            }
-            localColor = clampColor(localColor);
-
-            let reflectedColor = { r: 0, g: 0, b: 0 };
-            const reflectivity = material.reflectivity || 0.0;
-            if (reflectivity > 0 && depth < MAX_RECURSION_DEPTH) {
-                const R_dir = normalize(subtract(rayDirection, multiplyScalar(geometricNormal, 2 * dot(geometricNormal, rayDirection))));
                 const reflectionRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, GEOMETRY_BIAS));
-                reflectedColor = traceRay(reflectionRayOrigin, R_dir, depth + 1);
+                let reflectedColor = traceRay(reflectionRayOrigin, R_dir, depth + 1);
+                let finalColor = { r: 0, g: 0, b: 0 }; const sin2_theta_t = eta_ratio * eta_ratio * (1.0 - cos_i * cos_i);
+                if (sin2_theta_t <= 1.0) {
+                    const cos_theta_t = Math.sqrt(1.0 - sin2_theta_t);
+                    const T_dir = normalize(add(multiplyScalar(I, eta_ratio), multiplyScalar(N_shading, (eta_ratio * cos_i - cos_theta_t))));
+                    const refractionRayOrigin = add(hitPoint, multiplyScalar(N_shading, -GEOMETRY_BIAS)); // Perhatikan N_shading
+                    let transmittedColor = traceRay(refractionRayOrigin, T_dir, depth + 1);
+                    finalColor = addColors(scaleColor(reflectedColor, fresnelReflectance), scaleColor(transmittedColor, 1.0 - fresnelReflectance));
+                } else { finalColor = reflectedColor; } // TIR
+                return clampColor(finalColor);
+            } else { // LOGIKA UNTUK MATERIAL OPAQUE ATAU HANYA REFLEKTIF (BOLA MERAH, BIRU, LANTAI)
+                let localColor = { r: 0, g: 0, b: 0 }; let effectiveDiffuseColor;
+                if (material.isPlane) {
+                    const cx = Math.floor(hitPoint.x / material.checkerSize); const cz = Math.floor(hitPoint.z / material.checkerSize);
+                    effectiveDiffuseColor = ((cx + cz) % 2 === 0) ? material.color1 : material.color2;
+                } else { effectiveDiffuseColor = material.diffuseColor; }
+                localColor = addColors(localColor, multiplyColors(ambientLight, effectiveDiffuseColor));
+                let shadowFactor = 1.0; const shadowRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, SHADOW_BIAS));
+                for (const obj of sceneObjects) {
+                    if (obj === hitObject) continue;
+                    let t_sh = obj.material.isPlane ? intersectPlane(shadowRayOrigin, light.direction, obj) : intersectSphere(shadowRayOrigin, light.direction, obj);
+                    if (t_sh !== null && t_sh > 0) { shadowFactor = 0.0; break; }
+                }
+                if (shadowFactor > 0) {
+                    const V = normalize(subtract(rayOrigin, hitPoint)); const L = light.direction; const N = geometricNormal;
+                    const diffuseIntensity = Math.max(0.0, dot(N, L));
+                    localColor = addColors(localColor, scaleColor(multiplyColors(light.color, effectiveDiffuseColor), diffuseIntensity));
+                    const H = normalize(add(L, V)); const specularIntensity = Math.pow(Math.max(0.0, dot(N, H)), material.shininess);
+                    localColor = addColors(localColor, scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity));
+                }
+                localColor = clampColor(localColor); let reflectedColor = { r: 0, g: 0, b: 0 };
+                const reflectivity = material.reflectivity || 0.0; // Hanya untuk refleksi non-dielektrik
+                if (reflectivity > 0 && depth < MAX_RECURSION_DEPTH) {
+                    const incidentDir = rayDirection;
+                    const R_dir = normalize(subtract(incidentDir, multiplyScalar(geometricNormal, 2 * dot(geometricNormal, incidentDir))));
+                    const reflectionRayOrigin = add(hitPoint, multiplyScalar(geometricNormal, GEOMETRY_BIAS)); // Gunakan geometricNormal
+                    reflectedColor = traceRay(reflectionRayOrigin, R_dir, depth + 1);
+                }
+                return clampColor(addColors(scaleColor(localColor, 1.0 - reflectivity), scaleColor(reflectedColor, reflectivity)));
             }
-
-            return clampColor(addColors(scaleColor(localColor, 1.0 - reflectivity), scaleColor(reflectedColor, reflectivity)));
         }
-
 
         document.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('rayCanvas'); const ctx = canvas.getContext('2d');
+            const iorSlider = document.getElementById('iorSlider');
+            const iorValueDisplay = document.getElementById('iorValue');
+
             const width = canvas.width; const height = canvas.height;
 
-            camera = { origin: { x: 0, y: 0.1, z: -3.8 } }; // Sedikit penyesuaian kamera
-            light = { direction: normalize({ x: 0.6, y: 0.7, z: -1.0 }), color: { r: 1.0, g: 1.0, b: 0.9 } };
+            // --- Definisi Scene ---
+            // Kamera, Cahaya, Background dari kode dengan bola merah & biru (yang Anda berikan)
+            // disesuaikan dengan tema UI gelap
+            camera = {
+                origin: { x: 0, y: 0.2, z: -3.5 },
+            };
+            light = {
+                direction: normalize({ x: 0.5, y: 0.8, z: -0.6 }),
+                color: { r: 1.0, g: 1.0, b: 1.0 }
+            };
             ambientLight = { r: 0.1, g: 0.1, b: 0.1 };
-            backgroundColor01 = colorFromRGB(70, 100, 150); // Langit lebih gelap
+            const bgRGB = { r: 50, g: 50, b: 60 }; // Background gelap dari kode UI
+            backgroundColor01 = colorFromRGB(bgRGB.r, bgRGB.g, bgRGB.b);
 
-            const sphereGlass = { // BOLA BENING BARU
-                center: { x: 0, y: -0.1, z: -0.2 },
-                radius: 0.5,
+
+            // Bola Kaca Interaktif (di tengah)
+            const sphereGlassInteractive = {
+                center: { x: 0.0, y: -0.15, z: 0.0 }, // Posisi tengah, sedikit lebih maju
+                radius: 0.45, // Ukuran disesuaikan
                 material: {
                     isRefractive: true,
-                    ior: 1.52, // IoR Kaca Umum (Crown Glass)
-                    // Untuk material refraktif murni, diffuse & specular biasanya tidak signifikan
-                    // atau warnanya berasal dari efek Fresnel dan apa yang ditransmisikan.
-                    // Reflectivity untuk logam, bukan untuk dielektrik ini.
-                    isPlane: false
+                    ior: parseFloat(iorSlider.value),
+                    isPlane: false,
+                    id: "interactive_glass_sphere"
                 }
             };
+            sphereGlassInteractiveRef = sphereGlassInteractive;
 
+            // Bola Merah Opaque (dari kode yang Anda berikan)
             const sphereRed = {
-                center: { x: -1.0, y: -0.2, z: 0.5 }, radius: 0.4,
-                material: { diffuseColor: colorFromRGB(200,30,30), specularColor: {r:0.8,g:0.8,b:0.8}, shininess: 80, reflectivity: 0.1, isPlane:false }
-            };
-            const sphereBlue = {
-                center: { x: 1.0, y: -0.1, z: 0.8 }, radius: 0.5,
-                material: { diffuseColor: colorFromRGB(30,30,200), specularColor: {r:0.9,g:0.9,b:0.9}, shininess: 100, reflectivity: 0.2, isPlane:false }
-            };
-            const planeFloor = {
-                point: { x:0,y:-0.61,z:0 }, normal: normalize({x:0,y:1,z:0}),
-                material: { color1:colorFromRGB(150,150,150), color2:colorFromRGB(80,80,80), specularColor:{r:0.1,g:0.1,b:0.1}, shininess:10, reflectivity:0.4, isPlane:true, checkerSize:0.6 }
-            };
-            sceneObjects = [sphereGlass, sphereRed, sphereBlue, planeFloor];
-
-            function render() {
-                const imageData = ctx.createImageData(width, height); const data = imageData.data;
-                console.time("renderTime");
-                for (let y=0; y<height; y++) {
-                    for (let x=0; x<width; x++) {
-                        const aspect = width/height;
-                        const vx = (2*(x+0.5)/width - 1.0) * aspect;
-                        const vy = (1.0 - 2*(y+0.5)/height);
-                        const prd = normalize(subtract({x:vx, y:vy, z:0}, camera.origin));
-                        const fc01 = traceRay(camera.origin, prd, 0);
-                        const fcRGB = colorToRGB(fc01);
-                        const idx = (y*width+x)*4;
-                        data[idx]=fcRGB.r; data[idx+1]=fcRGB.g; data[idx+2]=fcRGB.b; data[idx+3]=255;
-                    }
+                center: { x: -0.8, y: -0.1, z: 0.5 }, // Posisi sedikit disesuaikan agar tidak overlap
+                radius: 0.5,
+                material: {
+                    diffuseColor: colorFromRGB(200, 50, 50),
+                    specularColor: { r: 0.8, g: 0.8, b: 0.8 },
+                    shininess: 100,
+                    reflectivity: 0.2,
+                    isPlane: false,
+                    isRefractive: false // Pastikan ini false
                 }
-                console.timeEnd("renderTime");
-                ctx.putImageData(imageData, 0, 0);
-                console.log("Rendering complete with refraction.");
-            }
-            render();
+            };
+
+            // Bola Biru Opaque (dari kode yang Anda berikan)
+            const sphereBlue = {
+                center: { x: 0.8, y: -0.20, z: 0.3 }, // Posisi sedikit disesuaikan
+                radius: 0.4,
+                material: {
+                    diffuseColor: colorFromRGB(50, 50, 200),
+                    specularColor: { r: 0.9, g: 0.9, b: 0.9 },
+                    shininess: 150,
+                    reflectivity: 0.3,
+                    isPlane: false,
+                    isRefractive: false // Pastikan ini false
+                }
+            };
+
+            // Plane (Lantai) (dari kode yang Anda berikan, dengan warna disesuaikan ke UI gelap)
+            const planeFloor = {
+                point: { x: 0, y: -0.61, z: 0 },
+                normal: normalize({ x: 0, y: 1, z: 0 }),
+                material: {
+                    color1: colorFromRGB(80, 80, 90), // Warna checker disesuaikan
+                    color2: colorFromRGB(50, 50, 60),
+                    specularColor: { r: 0.2, g: 0.2, b: 0.2 },
+                    shininess: 20,
+                    reflectivity: 0.6,
+                    isPlane: true,
+                    checkerSize: 0.7,
+                    isRefractive: false // Pastikan ini false
+                }
+            };
+            sceneObjects = [sphereRed, sphereBlue, sphereGlassInteractive, planeFloor];
+
+
+            function doRender() {const imageData=ctx.createImageData(width,height);const data=imageData.data;for(let y=0;y<height;y++){for(let x=0;x<width;x++){const aspect=width/height;const vx=(2*(x+0.5)/width-1.0)*aspect;const vy=(1.0-2*(y+0.5)/height);const prd=normalize(subtract({x:vx,y:vy,z:0},camera.origin));const fc01=traceRay(camera.origin,prd,0);const fcRGB=colorToRGB(fc01);const idx=(y*width+x)*4;data[idx]=fcRGB.r;data[idx+1]=fcRGB.g;data[idx+2]=fcRGB.b;data[idx+3]=255;}}ctx.putImageData(imageData,0,0);}
+
+            iorSlider.addEventListener('input', () => {
+                const newIoR = parseFloat(iorSlider.value);
+                iorValueDisplay.textContent = newIoR.toFixed(2);
+                if (sphereGlassInteractiveRef) {
+                    sphereGlassInteractiveRef.material.ior = newIoR;
+                    doRender();
+                }
+            });
+            iorValueDisplay.textContent = parseFloat(iorSlider.value).toFixed(2);
+            doRender();
         });
     </script>
 </body>
