@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing - Phong Lighting</title>
+    <title>Demo Ray Tracing - Phong Lighting (Cahaya dari Atas)</title>
     <style>
         body {
             display: flex;
@@ -23,7 +23,7 @@
 </head>
 <body>
     <h1>Demo Ray Tracing Dua Bola (Phong Lighting)</h1>
-    <p>Menampilkan dua bola dengan pencahayaan Ambient, Diffuse, dan Specular.</p>
+    <p>Menampilkan dua bola dengan pencahayaan Ambient, Diffuse, dan Specular. Cahaya datang dari atas.</p>
     <canvas id="rayCanvas" width="500" height="500"></canvas>
 
     <script>
@@ -42,19 +42,15 @@
         // --- Akhir Bagian Helper Vektor ---
 
         // --- Bagian Helper (Warna) ---
-        // Mengalikan dua warna komponen per komponen (misal: lightColor * materialColor)
         function multiplyColors(c1, c2) {
             return { r: c1.r * c2.r, g: c1.g * c2.g, b: c1.b * c2.b };
         }
-        // Menambahkan dua warna komponen per komponen
         function addColors(c1, c2) {
             return { r: c1.r + c2.r, g: c1.g + c2.g, b: c1.b + c2.b };
         }
-        // Mengalikan warna dengan skalar (intensitas)
         function scaleColor(c, s) {
             return { r: c.r * s, g: c.g * s, b: c.b * s };
         }
-        // Menjepit nilai warna antara min dan max (biasanya 0 dan 1 atau 0 dan 255)
         function clampColor(c, min = 0, max = 1) {
              return {
                  r: Math.max(min, Math.min(max, c.r)),
@@ -79,8 +75,10 @@
 
             // Definisi Cahaya
             const light = {
-                // Arah MENJAUHI sumber cahaya (directional light)
-                direction: normalize({ x: 0.5, y: -0.8, z: -1.0 }),
+                // Dalam konteks penggunaan di Phong shading di bawah (dot(normal, lightDir)),
+                // light.direction ini adalah vektor DARI TITIK PERMUKAAN MENUJU SUMBER CAHAYA.
+                // Untuk cahaya yang datang dari atas, vektor ini menunjuk ke atas (positif Y).
+                direction: { x: 0, y: 1, z: 0 }, // DIUBAH: Cahaya datang dari atas
                 // Warna dan intensitas cahaya (0.0 - 1.0)
                 color: { r: 1.0, g: 1.0, b: 1.0 }
             };
@@ -92,28 +90,27 @@
                 center: { x: -0.3, y: 0.1, z: 0 },
                 radius: 0.5,
                 material: {
-                    diffuseColor: { r: 1.0, g: 0.2, b: 0.2 }, // Warna dasar Merah
-                    specularColor: { r: 1.0, g: 1.0, b: 1.0 }, // Highlight putih
-                    shininess: 32 // Tingkat kilau (semakin tinggi semakin kecil highlight)
+                    diffuseColor: { r: 1.0, g: 0.2, b: 0.2 },
+                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+                    shininess: 32
                 }
             };
 
             // Bola 2 (Biru)
             const sphere2 = {
-                center: { x: 0.3, y: -0.1, z: -0.5 }, // Lebih dekat
+                center: { x: 0.3, y: -0.1, z: -0.5 },
                 radius: 0.4,
                 material: {
-                    diffuseColor: { r: 0.2, g: 0.2, b: 1.0 }, // Warna dasar Biru
-                    specularColor: { r: 1.0, g: 1.0, b: 1.0 }, // Highlight putih
-                    shininess: 64 // Sedikit lebih berkilau dari merah
+                    diffuseColor: { r: 0.2, g: 0.2, b: 1.0 },
+                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
+                    shininess: 64
                 }
             };
 
             const sceneObjects = [sphere1, sphere2];
-            const backgroundColor = { r: 135, g: 206, b: 250 }; // Background (0-255)
+            const backgroundColor = { r: 135, g: 206, b: 250 };
 
             // --- Fungsi Ray-Sphere Intersection ---
-            // (Sama seperti sebelumnya)
             function intersectSphere(rayOrigin, rayDirection, sphere) {
                 const oc = subtract(rayOrigin, sphere.center);
                 const a = dot(rayDirection, rayDirection);
@@ -150,7 +147,7 @@
                         let hitObject = null;
 
                         for (const object of sceneObjects) {
-                             if (object.radius !== undefined) { // Cek bola
+                             if (object.radius !== undefined) {
                                 const t = intersectSphere(camera.origin, rayDirection, object);
                                 if (t !== null && t < closestT) {
                                     closestT = t;
@@ -159,64 +156,45 @@
                              }
                         }
 
-                        let finalColor = backgroundColor; // Default background color (0-255 range)
+                        let finalColor = backgroundColor;
                         let isBackground = true;
 
                         if (hitObject !== null) {
                             isBackground = false;
-                            // --- Kalkulasi Pencahayaan Phong ---
                             const material = hitObject.material;
-
-                            // 1. Hit Point: Titik di permukaan objek tempat ray berpotongan
                             const hitPoint = add(camera.origin, multiplyScalar(rayDirection, closestT));
-
-                            // 2. Normal: Vektor normal permukaan pada hitPoint
                             const normal = normalize(subtract(hitPoint, hitObject.center));
-
-                            // 3. View Direction: Arah dari hitPoint ke kamera
                             const viewDir = normalize(subtract(camera.origin, hitPoint));
 
-                            // 4. Light Direction: Arah dari hitPoint ke cahaya (negasi dari arah cahaya)
-                            //    Kita gunakan arah cahaya yang didefinisikan (menjauhi sumber)
+                            // lightDir adalah vektor dari hitPoint KE sumber cahaya.
+                            // Sesuai definisi light.direction di atas.
                             const lightDir = light.direction;
 
-                            // Komponen Ambient
                             const ambient = multiplyColors(ambientLight, material.diffuseColor);
 
-                            // Komponen Diffuse
-                            // dot product antara normal dan arah cahaya. Clamp ke 0 jika negatif.
                             const diffuseIntensity = Math.max(0.0, dot(normal, lightDir));
                             const diffuse = scaleColor(multiplyColors(light.color, material.diffuseColor), diffuseIntensity);
 
-                            // Komponen Specular
-                            // Menggunakan Blinn-Phong (halfway vector) untuk efisiensi & hasil baik
                             const halfwayDir = normalize(add(lightDir, viewDir));
                             const specAngle = Math.max(0.0, dot(normal, halfwayDir));
                             const specularIntensity = Math.pow(specAngle, material.shininess);
                             const specular = scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity);
 
-                            // Kombinasi Total (Ambient + Diffuse + Specular)
-                            // Kita gunakan warna dalam rentang 0.0 - 1.0 untuk perhitungan
                             let combinedColor = addColors(ambient, addColors(diffuse, specular));
-
-                            // Clamp hasil akhir antara 0.0 dan 1.0
                             combinedColor = clampColor(combinedColor, 0.0, 1.0);
 
-                            // Konversi ke rentang 0-255 untuk ImageData
                             finalColor = {
                                 r: Math.floor(combinedColor.r * 255),
                                 g: Math.floor(combinedColor.g * 255),
                                 b: Math.floor(combinedColor.b * 255)
                             };
-                            // --- Akhir Kalkulasi Phong ---
                         }
 
-                        // Set warna piksel pada ImageData
                         const index = (y * width + x) * 4;
                         data[index]     = finalColor.r;
                         data[index + 1] = finalColor.g;
                         data[index + 2] = finalColor.b;
-                        data[index + 3] = 255; // Alpha
+                        data[index + 3] = 255;
                     }
                 }
 

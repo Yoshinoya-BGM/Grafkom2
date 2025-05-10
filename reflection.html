@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing - Phong Lighting, Plane, Shadows & Reflections</title>
+    <title>Demo Ray Tracing - Phong + Shadows + Reflections</title>
     <style>
         body {
             display: flex;
@@ -22,12 +22,12 @@
     </style>
 </head>
 <body>
-    <h1>Demo Ray Tracing (Phong, Plane, Shadows & Floor Reflections)</h1>
-    <p>Menampilkan dua bola, plane reflektif dengan bayangan, dan refleksi hingga 5 pantulan.</p>
+    <h1>Demo Ray Tracing (Phong + Bayangan + Refleksi Lantai)</h1>
+    <p>Menampilkan bayangan dan refleksi pada lantai (maks. 5 pantulan).</p>
     <canvas id="rayCanvas" width="500" height="500"></canvas>
 
     <script>
-        // --- Bagian Helper (Vektor & Warna) --- (Sama seperti sebelumnya)
+        // --- Bagian Helper (Vektor) ---
         function add(v1, v2) { return { x: v1.x + v2.x, y: v1.y + v2.y, z: v1.z + v2.z }; }
         function subtract(v1, v2) { return { x: v1.x - v2.x, y: v1.y - v2.y, z: v1.z - v2.z }; }
         function multiplyScalar(v, s) { return { x: v.x * s, y: v.y * s, z: v.z * s }; }
@@ -39,6 +39,9 @@
             if (len === 0) return { x: 0, y: 0, z: 0 };
             return multiplyScalar(v, 1 / len);
         }
+        // --- Akhir Bagian Helper Vektor ---
+
+        // --- Bagian Helper (Warna) ---
         function multiplyColors(c1, c2) { return { r: c1.r * c2.r, g: c1.g * c2.g, b: c1.b * c2.b }; }
         function addColors(c1, c2) { return { r: c1.r + c2.r, g: c1.g + c2.g, b: c1.b + c2.b }; }
         function scaleColor(c, s) { return { r: c.r * s, g: c.g * s, b: c.b * s }; }
@@ -49,272 +52,241 @@
                  b: Math.max(min, Math.min(max, c.b))
              };
         }
-        // --- Akhir Bagian Helper ---
+        function lerpColor(c1, c2, t) { /* ... sama ... */ return {r:c1.r*(1-t)+c2.r*t,g:c1.g*(1-t)+c2.g*t,b:c1.b*(1-t)+c2.b*t};}
+        function colorFromRGB(r, g, b) { return { r: r/255, g: g/255, b: b/255 }; } // Konversi 0-255 ke 0-1
+        function colorToRGB(c01) { // Konversi 0-1 ke 0-255 untuk output
+            return {
+                r: Math.floor(clampColor(c01).r * 255),
+                g: Math.floor(clampColor(c01).g * 255),
+                b: Math.floor(clampColor(c01).b * 255)
+            };
+        }
+        // --- Akhir Bagian Helper Warna ---
 
+        // --- Konstanta ---
+        const SHADOW_BIAS = 0.001;
+        const REFLECTION_BIAS = 0.001; // Bias untuk ray refleksi
+        const MAX_RECURSION_DEPTH = 5;
+
+        // Global scene objects (didefinisikan di luar DOMContentLoaded agar bisa diakses traceRay)
+        let sceneObjects = [];
+        let camera = {};
+        let light = {};
+        let ambientLight = {};
+        let backgroundColor01 = { r: 0, g: 0, b: 0 }; // Background dalam format 0-1
+
+        // --- Fungsi Ray-Sphere Intersection ---
+        function intersectSphere(rayOrigin, rayDirection, sphere) { /* ... sama ... */const oc=subtract(rayOrigin,sphere.center);const a=dot(rayDirection,rayDirection);const b=2.0*dot(oc,rayDirection);const c=dot(oc,oc)-sphere.radius*sphere.radius;const discriminant=b*b-4*a*c;if(discriminant<0){return null;}else{const t1=(-b-Math.sqrt(discriminant))/(2.0*a);const t2=(-b+Math.sqrt(discriminant))/(2.0*a);const hitEpsilon=0.0001;if(t1>hitEpsilon&&(t2<=hitEpsilon||t1<t2))return t1;if(t2>hitEpsilon)return t2;return null;}}
+
+        // --- Fungsi Ray-Plane Intersection ---
+        function intersectPlane(rayOrigin, rayDirection, plane) { /* ... sama ... */const DdotN=dot(rayDirection,plane.normal);const hitEpsilon=1e-6;if(Math.abs(DdotN)<hitEpsilon){return null;}const t=dot(subtract(plane.point,rayOrigin),plane.normal)/DdotN;if(t>hitEpsilon){return t;}return null;}
+
+
+        // --- Fungsi Utama Ray Tracing (Rekursif) ---
+        function traceRay(rayOrigin, rayDirection, depth) {
+            if (depth >= MAX_RECURSION_DEPTH) {
+                return { r: 0, g: 0, b: 0 }; // Hitam jika kedalaman maks tercapai
+            }
+
+            let closestT = Infinity;
+            let hitObject = null;
+
+            // 1. Cari perpotongan terdekat
+            for (const object of sceneObjects) {
+                let t = null;
+                if (object.material.isPlane) {
+                    t = intersectPlane(rayOrigin, rayDirection, object);
+                } else if (object.radius !== undefined) {
+                    t = intersectSphere(rayOrigin, rayDirection, object);
+                }
+
+                if (t !== null && t < closestT) {
+                    closestT = t;
+                    hitObject = object;
+                }
+            }
+
+            if (hitObject === null) {
+                return backgroundColor01; // Tidak kena objek, kembalikan warna background (untuk ray primer & sekunder)
+            }
+
+            // 2. Hitung titik potong, normal, dan warna dasar
+            const material = hitObject.material;
+            const hitPoint = add(rayOrigin, multiplyScalar(rayDirection, closestT));
+            let objectNormal;
+            let effectiveDiffuseColor;
+
+            if (material.isPlane) {
+                objectNormal = hitObject.normal;
+                const checkerSize = material.checkerSize || 0.5;
+                const cx = Math.floor(hitPoint.x / checkerSize);
+                const cz = Math.floor(hitPoint.z / checkerSize);
+                effectiveDiffuseColor = ((cx + cz) % 2 === 0) ? material.color1 : material.color2;
+            } else { // Bola
+                objectNormal = normalize(subtract(hitPoint, hitObject.center));
+                effectiveDiffuseColor = material.diffuseColor;
+            }
+
+            const N = objectNormal; // Normal permukaan
+            const V = normalize(subtract(rayOrigin, hitPoint)); // Vektor dari titik potong ke asal ray
+
+            // 3. Hitung Pencahayaan Lokal (Phong)
+            let localColor = { r: 0, g: 0, b: 0 };
+
+            // Komponen Ambient
+            const ambient = multiplyColors(ambientLight, effectiveDiffuseColor);
+            localColor = addColors(localColor, ambient);
+
+            // Cek Bayangan
+            let shadowFactor = 1.0;
+            const shadowRayOrigin = add(hitPoint, multiplyScalar(N, SHADOW_BIAS));
+            const shadowRayDirection = light.direction; // Arah MENUJU cahaya
+
+            for (const potentialBlocker of sceneObjects) {
+                if (potentialBlocker === hitObject) continue;
+                let t_shadow = null;
+                if (potentialBlocker.material.isPlane) t_shadow = intersectPlane(shadowRayOrigin, shadowRayDirection, potentialBlocker);
+                else if (potentialBlocker.radius !== undefined) t_shadow = intersectSphere(shadowRayOrigin, shadowRayDirection, potentialBlocker);
+
+                if (t_shadow !== null && t_shadow > 0) {
+                    shadowFactor = 0.0;
+                    break;
+                }
+            }
+
+            if (shadowFactor > 0) { // Hanya jika tidak terhalang bayangan
+                // Komponen Diffuse
+                const diffuseIntensity = Math.max(0.0, dot(N, light.direction));
+                const diffuse = scaleColor(multiplyColors(light.color, effectiveDiffuseColor), diffuseIntensity);
+                localColor = addColors(localColor, diffuse);
+
+                // Komponen Specular (Blinn-Phong)
+                const halfwayDir = normalize(add(light.direction, V));
+                const specAngle = Math.max(0.0, dot(N, halfwayDir));
+                const specularIntensity = Math.pow(specAngle, material.shininess);
+                const specular = scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity);
+                localColor = addColors(localColor, specular);
+            }
+            localColor = clampColor(localColor);
+
+
+            // 4. Hitung Refleksi
+            let reflectedColor = { r: 0, g: 0, b: 0 };
+            const reflectivity = material.reflectivity || 0.0;
+
+            if (reflectivity > 0 && depth < MAX_RECURSION_DEPTH) {
+                // Vektor insiden I adalah -rayDirection (jika rayDirection dari mata) atau rayDirection (jika rayDirection ke permukaan)
+                // Di sini, rayDirection adalah vektor yang mengenai permukaan, jadi I = rayDirection
+                const incidentDir = rayDirection;
+                // R = I - 2 * N * dot(N, I)
+                const reflectionDir = normalize(subtract(incidentDir, multiplyScalar(N, 2 * dot(N, incidentDir))));
+                const reflectionRayOrigin = add(hitPoint, multiplyScalar(N, REFLECTION_BIAS)); // Geser dari permukaan
+
+                reflectedColor = traceRay(reflectionRayOrigin, reflectionDir, depth + 1);
+            }
+
+            // 5. Kombinasikan Warna Lokal dan Refleksi
+            // finalColor = localColor * (1 - Kr) + reflectedColor * Kr
+            let finalCombinedColor = addColors(
+                scaleColor(localColor, 1.0 - reflectivity),
+                scaleColor(reflectedColor, reflectivity)
+            );
+
+            return clampColor(finalCombinedColor);
+        }
+
+
+        // --- Bagian Script Utama (Setup Scene & Render Loop) ---
         document.addEventListener('DOMContentLoaded', () => {
             const canvas = document.getElementById('rayCanvas');
             const ctx = canvas.getContext('2d');
             const width = canvas.width;
             const height = canvas.height;
-            const epsilon = 0.0001;
 
             // --- Definisi Scene ---
-            const camera = {
-                origin: { x: 0, y: 0.7, z: -4 }, // Naikkan kamera sedikit lagi untuk refleksi yg lebih baik
+            camera = {
+                origin: { x: 0, y: 0.2, z: -3.5 }, // Mundur sedikit lagi
             };
 
-            const light = {
-                direction: normalize({ x: 0.6, y: -0.7, z: -0.8 }),
+            light = {
+                direction: normalize({ x: 0.5, y: 0.8, z: -0.6 }), // Arah cahaya diubah untuk refleksi lebih menarik
                 color: { r: 1.0, g: 1.0, b: 1.0 }
             };
-            const ambientLight = { r: 0.1, g: 0.1, b: 0.1 }; // Kurangi ambient agar refleksi lebih menonjol
+            ambientLight = { r: 0.1, g: 0.1, b: 0.1 }; // Ambient sedikit dikurangi
 
+            const bgRGB = { r: 100, g: 149, b: 237 }; // Cornflower blue
+            backgroundColor01 = colorFromRGB(bgRGB.r, bgRGB.g, bgRGB.b);
+
+            // Bola 1 (Merah)
             const sphere1 = {
-                type: 'sphere',
-                center: { x: -0.8, y: 0, z: -1.5 },
+                center: { x: -0.6, y: -0.1, z: 0.8 }, // y: -0.1 - 0.5 = -0.6 (dasar bola)
                 radius: 0.5,
                 material: {
-                    diffuseColor: { r: 1.0, g: 0.3, b: 0.3 }, // Merah
-                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
-                    shininess: 50,
-                    reflectivity: 0.1 // Sedikit reflektif juga
+                    diffuseColor: colorFromRGB(200, 50, 50),
+                    specularColor: { r: 0.8, g: 0.8, b: 0.8 },
+                    shininess: 100,
+                    reflectivity: 0.2, // Sedikit reflektif
+                    isPlane: false,
                 }
             };
 
+            // Bola 2 (Biru)
             const sphere2 = {
-                type: 'sphere',
-                center: { x: 0.8, y: 0.2, z: -1.0 },
+                center: { x: 0.6, y: -0.2, z: 0.2 }, // y: -0.2 - 0.4 = -0.6 (dasar bola)
                 radius: 0.4,
                 material: {
-                    diffuseColor: { r: 0.3, g: 0.3, b: 1.0 }, // Biru
-                    specularColor: { r: 1.0, g: 1.0, b: 1.0 },
-                    shininess: 80,
-                    reflectivity: 0.2 // Sedikit reflektif juga
+                    diffuseColor: colorFromRGB(50, 50, 200),
+                    specularColor: { r: 0.9, g: 0.9, b: 0.9 },
+                    shininess: 150,
+                    reflectivity: 0.3, // Lebih reflektif dari merah
+                    isPlane: false,
                 }
             };
 
-            const floorPlane = {
-                type: 'plane',
-                point: { x: 0, y: -0.5, z: 0 },
+            // Plane (Lantai)
+            const plane = {
+                point: { x: 0, y: -0.61, z: 0 }, // Lantai
                 normal: normalize({ x: 0, y: 1, z: 0 }),
                 material: {
-                    color1: { r: 0.9, g: 0.9, b: 0.9 }, // Abu-abu sangat muda
-                    color2: { r: 0.7, g: 0.7, b: 0.7 }, // Abu-abu sedikit lebih tua
-                    specularColor: { r: 0.5, g: 0.5, b: 0.5 }, // Kilau pada bagian non-reflektif
+                    color1: colorFromRGB(180, 180, 180), // Abu-abu muda untuk checker
+                    color2: colorFromRGB(100, 100, 100), // Abu-abu gelap untuk checker
+                    specularColor: { r: 0.2, g: 0.2, b: 0.2 },
                     shininess: 20,
-                    isCheckerboard: true,
-                    checkerScale: 2,
-                    reflectivity: 0.7 // Cukup reflektif
+                    reflectivity: 0.6, // CUKUP REFLEKTIF
+                    isPlane: true,
+                    checkerSize: 0.7
                 }
             };
-            
-            const ceilingPlane = { // Untuk memantulkan sesuatu di atas
-                type: 'plane',
-                point: {x: 0, y: 3, z:0},
-                normal: normalize({x:0, y: -1, z:0}), // Menghadap ke bawah
-                material: {
-                    diffuseColor: {r:0.6, g:0.6, b:0.8}, // Lavender
-                    specularColor: {r:0,g:0,b:0},
-                    shininess: 1,
-                    reflectivity: 0
-                }
-            };
+            sceneObjects = [sphere1, sphere2, plane];
 
 
-            const sceneObjects = [sphere1, sphere2, floorPlane, ceilingPlane];
-            const backgroundColor = { r: 50, g: 50, b: 80 }; // Background lebih gelap (0-255)
-            const MAX_RECURSION_DEPTH = 5;
-
-            // Konversi warna background ke 0-1 untuk traceRay
-            const backgroundColor01 = {
-                r: backgroundColor.r / 255,
-                g: backgroundColor.g / 255,
-                b: backgroundColor.b / 255
-            };
-
-            function intersectSphere(rayOrigin, rayDirection, sphere) {
-                const oc = subtract(rayOrigin, sphere.center);
-                const a = dot(rayDirection, rayDirection); // selalu 1 jika rayDirection dinormalisasi
-                const b = 2.0 * dot(oc, rayDirection);
-                const c = dot(oc, oc) - sphere.radius * sphere.radius;
-                const discriminant = b * b - 4 * a * c;
-                if (discriminant < 0) return null;
-                const t1 = (-b - Math.sqrt(discriminant)) / (2.0 * a);
-                const t2 = (-b + Math.sqrt(discriminant)) / (2.0 * a);
-                if (t1 > epsilon && (t2 <= epsilon || t1 < t2)) return t1;
-                if (t2 > epsilon) return t2;
-                return null;
-            }
-
-            function intersectPlane(rayOrigin, rayDirection, plane) {
-                const denominator = dot(rayDirection, plane.normal);
-                if (Math.abs(denominator) < epsilon) return null;
-                const t = dot(subtract(plane.point, rayOrigin), plane.normal) / denominator;
-                return (t > epsilon) ? t : null;
-            }
-
-            function traceRay(rayOrigin, rayDirection, depth) {
-                if (depth > MAX_RECURSION_DEPTH) {
-                    return { r: 0, g: 0, b: 0 }; // Batas rekursi, kembalikan hitam
-                }
-
-                let closestT = Infinity;
-                let hitObject = null;
-                let hitObjectIndex = -1;
-
-                sceneObjects.forEach((object, index) => {
-                    let t = null;
-                    if (object.type === 'sphere') {
-                        t = intersectSphere(rayOrigin, rayDirection, object);
-                    } else if (object.type === 'plane') {
-                        t = intersectPlane(rayOrigin, rayDirection, object);
-                    }
-                    if (t !== null && t < closestT) {
-                        closestT = t;
-                        hitObject = object;
-                        hitObjectIndex = index;
-                    }
-                });
-
-                if (hitObject === null) {
-                    return backgroundColor01; // Tidak ada yang kena, kembalikan warna background
-                }
-
-                const hitPoint = add(rayOrigin, multiplyScalar(rayDirection, closestT));
-                const material = hitObject.material;
-                
-                let surfaceNormal;
-                let actualDiffuseColor = material.diffuseColor || {r:0.5,g:0.5,b:0.5}; // Default
-
-                if (hitObject.type === 'sphere') {
-                    surfaceNormal = normalize(subtract(hitPoint, hitObject.center));
-                } else if (hitObject.type === 'plane') {
-                    surfaceNormal = hitObject.normal;
-                    // Jika ray mengenai dari "belakang" normal, balik normalnya agar pencahayaan benar
-                    if (dot(rayDirection, surfaceNormal) > 0) {
-                        surfaceNormal = multiplyScalar(surfaceNormal, -1);
-                    }
-                    if (material.isCheckerboard) {
-                        const u = Math.floor(hitPoint.x * material.checkerScale + 1000.5); // Offset untuk hindari masalah di dekat 0
-                        const v = Math.floor(hitPoint.z * material.checkerScale + 1000.5);
-                        actualDiffuseColor = ((u + v) % 2 === 0) ? material.color1 : material.color2;
-                    }
-                } else { return {r:1,g:0,b:1}; /* Error color */ }
-
-
-                // --- Pencahayaan Lokal (Phong) ---
-                const viewDir = normalize(subtract(rayOrigin, hitPoint));
-
-                // Shadow Calculation
-                let shadowFactor = 1.0;
-                const shadowRayOrigin = add(hitPoint, multiplyScalar(surfaceNormal, epsilon * 10));
-                // Arah shadow ray adalah menuju sumber cahaya (negasi dari light.direction jika light.direction adalah DARI SUMBER)
-                // Tapi kita definisikan light.direction MENJAUHI sumber, jadi shadowRayDirection = light.direction
-                const shadowRayDirection = light.direction; 
-
-                for (let i = 0; i < sceneObjects.length; i++) {
-                    if (i === hitObjectIndex) continue; // Jangan self-shadow
-                    const otherObject = sceneObjects[i];
-                    let tShadow = null;
-                    if (otherObject.type === 'sphere') {
-                        tShadow = intersectSphere(shadowRayOrigin, shadowRayDirection, otherObject);
-                    } else if (otherObject.type === 'plane') {
-                        tShadow = intersectPlane(shadowRayOrigin, shadowRayDirection, otherObject);
-                    }
-                    if (tShadow !== null && tShadow > epsilon) {
-                        shadowFactor = 0.2; // Bayangan lembut
-                        break;
-                    }
-                }
-
-                const ambient = multiplyColors(ambientLight, actualDiffuseColor);
-                let diffuse = { r: 0, g: 0, b: 0 };
-                let specular = { r: 0, g: 0, b: 0 };
-
-                if (shadowFactor > 0.01) {
-                    const NdotL = dot(surfaceNormal, light.direction);
-                    const diffuseIntensity = Math.max(0.0, NdotL);
-                    diffuse = scaleColor(multiplyColors(light.color, actualDiffuseColor), diffuseIntensity * shadowFactor);
-
-                    const matSpecularColor = material.specularColor || { r: 0, g: 0, b: 0 };
-                    const matShininess = material.shininess || 1;
-                    const halfwayDir = normalize(add(light.direction, viewDir));
-                    const NdotH = dot(surfaceNormal, halfwayDir);
-                    const specAngle = Math.max(0.0, NdotH);
-                    const specularIntensity = Math.pow(specAngle, matShininess);
-                    specular = scaleColor(multiplyColors(light.color, matSpecularColor), specularIntensity * shadowFactor);
-                }
-                
-                let localColor = addColors(ambient, addColors(diffuse, specular));
-
-                // --- Kalkulasi Refleksi ---
-                let reflectedColor = { r: 0, g: 0, b: 0 };
-                const reflectivity = material.reflectivity || 0;
-
-                if (reflectivity > 0 && depth < MAX_RECURSION_DEPTH) {
-                    // Vektor datang I = rayDirection
-                    // Vektor refleksi R = I - 2 * N * dot(N, I)
-                    const I = rayDirection;
-                    const N = surfaceNormal; // Pastikan N menunjuk keluar dari permukaan
-                    const NdotI = dot(N, I);
-                    
-                    const reflectionVec = subtract(I, multiplyScalar(N, 2 * NdotI));
-                    const reflectionRayDir = normalize(reflectionVec);
-                    // Offset origin sedikit dari permukaan searah normal
-                    const reflectionRayOrigin = add(hitPoint, multiplyScalar(N, epsilon * 10)); 
-
-                    reflectedColor = traceRay(reflectionRayOrigin, reflectionRayDir, depth + 1);
-                }
-                
-                // Kombinasi warna lokal dan warna refleksi
-                let finalCombinedColor = addColors(
-                    scaleColor(localColor, 1 - reflectivity),
-                    scaleColor(reflectedColor, reflectivity)
-                );
-                
-                return finalCombinedColor; // Warna masih dalam rentang 0-1
-            }
-
-            // --- Proses Rendering Utama ---
+            // --- Proses Rendering ---
             function render() {
                 const imageData = ctx.createImageData(width, height);
                 const data = imageData.data;
 
                 console.time("renderTime");
+                for (let y_canvas = 0; y_canvas < height; y_canvas++) {
+                    for (let x_canvas = 0; x_canvas < width; x_canvas++) {
+                        const viewportX = (2 * (x_canvas + 0.5) / width - 1.0) * (width/height); // Aspect ratio
+                        const viewportY = (1.0 - 2 * (y_canvas + 0.5) / height);
+                        const pixelPosWorld = { x: viewportX, y: viewportY, z: 0 }; // Viewport di z=0
+                        const primaryRayDirection = normalize(subtract(pixelPosWorld, camera.origin));
 
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        const aspectRatio = width / height;
-                        const viewportX = (2 * (x + 0.5) / width - 1.0) * aspectRatio;
-                        const viewportY = (1.0 - 2 * (y + 0.5) / height);
-                        
-                        // View plane 1 unit di depan kamera (focal length = 1)
-                        const targetPointOnViewPlane = { x: viewportX, y: viewportY, z: camera.origin.z + 1 };
-                        const initialRayDirection = normalize(subtract(targetPointOnViewPlane, camera.origin));
+                        const finalColor01 = traceRay(camera.origin, primaryRayDirection, 0);
+                        const finalColorRGB = colorToRGB(finalColor01);
 
-                        let colorFromRay = traceRay(camera.origin, initialRayDirection, 0);
-
-                        // Clamp hasil akhir sebelum konversi ke 0-255
-                        colorFromRay = clampColor(colorFromRay, 0.0, 1.0);
-                        
-                        const finalPixelColor = {
-                            r: Math.floor(colorFromRay.r * 255),
-                            g: Math.floor(colorFromRay.g * 255),
-                            b: Math.floor(colorFromRay.b * 255)
-                        };
-
-                        const index = (y * width + x) * 4;
-                        data[index]     = finalPixelColor.r;
-                        data[index + 1] = finalPixelColor.g;
-                        data[index + 2] = finalPixelColor.b;
-                        data[index + 3] = 255; // Alpha
+                        const index = (y_canvas * width + x_canvas) * 4;
+                        data[index]     = finalColorRGB.r;
+                        data[index + 1] = finalColorRGB.g;
+                        data[index + 2] = finalColorRGB.b;
+                        data[index + 3] = 255;
                     }
                 }
-                ctx.putImageData(imageData, 0, 0);
                 console.timeEnd("renderTime");
-                console.log(`Rendering complete with reflections (max depth: ${MAX_RECURSION_DEPTH}).`);
+                ctx.putImageData(imageData, 0, 0);
+                console.log("Rendering complete with reflections.");
             }
-
             render();
         });
     </script>

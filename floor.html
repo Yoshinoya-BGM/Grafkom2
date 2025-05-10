@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Demo Ray Tracing - Phong Lighting dengan Plane</title>
+    <title>Demo Ray Tracing - Phong Lighting + Plane (Bola Lebih Jauh & Tinggi)</title>
     <style>
         body {
             display: flex;
@@ -22,8 +22,8 @@
     </style>
 </head>
 <body>
-    <h1>Demo Ray Tracing Dua Bola & Plane (Phong Lighting + Shadows)</h1>
-    <p>Menampilkan dua bola dan sebuah plane dengan pencahayaan Ambient, Diffuse, Specular, dan bayangan.</p>
+    <h1>Demo Ray Tracing Dua Bola dan Lantai Bergradasi (Phong Lighting)</h1>
+    <p>Bola lebih jauh ke belakang dan lebih tinggi dari lantai.</p>
     <canvas id="rayCanvas" width="500" height="500"></canvas>
 
     <script>
@@ -58,6 +58,13 @@
                  b: Math.max(min, Math.min(max, c.b))
              };
         }
+        function lerpColor(c1, c2, t) { // Linear interpolate colors
+            return {
+                r: c1.r * (1 - t) + c2.r * t,
+                g: c1.g * (1 - t) + c2.g * t,
+                b: c1.b * (1 - t) + c2.b * t
+            };
+        }
         // --- Akhir Bagian Helper Warna ---
 
 
@@ -68,59 +75,62 @@
             const width = canvas.width;
             const height = canvas.height;
 
-            const epsilon = 0.0001; // Small value to avoid self-intersection / shadow acne
-
             // --- Definisi Scene ---
             const camera = {
-                origin: { x: 0, y: 0.5, z: -4 }, // Angkat kamera sedikit
+                origin: { x: 0, y: 0.2, z: -3 }, // Kamera mungkin perlu sedikit disesuaikan jika bola terlalu tinggi
             };
 
             const light = {
-                direction: normalize({ x: 0.5, y: -0.8, z: -0.7 }),
+                direction: { x: 0, y: 1, z: 0 }, // Cahaya dari atas
                 color: { r: 1.0, g: 1.0, b: 1.0 }
             };
             const ambientLight = { r: 0.15, g: 0.15, b: 0.15 };
 
+            // Bola 1 (Merah)
             const sphere1 = {
-                type: 'sphere',
-                center: { x: -0.7, y: 0, z: -1 },
+                center: { x: -0.5, y: 0.5, z: 1.8 }, // DIUBAH: y dinaikkan, z digeser lebih jauh ke belakang
                 radius: 0.5,
                 material: {
                     diffuseColor: { r: 1.0, g: 0.2, b: 0.2 },
                     specularColor: { r: 1.0, g: 1.0, b: 1.0 },
-                    shininess: 32
+                    shininess: 32,
+                    isPlane: false
                 }
             };
 
+            // Bola 2 (Biru)
             const sphere2 = {
-                type: 'sphere',
-                center: { x: 0.7, y: -0.1, z: -0.5 },
+                center: { x: 0.5, y: 0.4, z: 1.2 }, // DIUBAH: y dinaikkan, z digeser lebih jauh ke belakang
                 radius: 0.4,
                 material: {
                     diffuseColor: { r: 0.2, g: 0.2, b: 1.0 },
                     specularColor: { r: 1.0, g: 1.0, b: 1.0 },
-                    shininess: 64
+                    shininess: 64,
+                    isPlane: false
                 }
             };
 
-            // Definisi Plane (Lantai)
-            const floorPlane = {
-                type: 'plane',
-                point: { x: 0, y: -0.5, z: 0 }, // Titik pada plane (menentukan ketinggian y = -0.5)
-                normal: normalize({ x: 0, y: 1, z: 0 }), // Normal menghadap ke atas
+            // Plane (Lantai)
+            // Lantai tetap di y = -0.61
+            // Bola 1 bawah: 0.5 - 0.5 = 0.0. Jarak ke lantai: 0.0 - (-0.61) = 0.61
+            // Bola 2 bawah: 0.4 - 0.4 = 0.0. Jarak ke lantai: 0.0 - (-0.61) = 0.61
+            const plane = {
+                point: { x: 0, y: -0.61, z: 0 },
+                normal: normalize({ x: 0, y: 1, z: 0 }),
                 material: {
-                    // Warna untuk pola checkerboard
-                    color1: { r: 0.8, g: 0.8, b: 0.8 }, // Abu-abu muda
-                    color2: { r: 0.2, g: 0.2, b: 0.2 }, // Abu-abu tua
-                    specularColor: { r: 0.1, g: 0.1, b: 0.1 }, // Sedikit kilau pada plane
+                    color1: { r: 0.9, g: 0.9, b: 0.9 },
+                    color2: { r: 0.4, g: 0.4, b: 0.5 },
+                    specularColor: { r: 0.2, g: 0.2, b: 0.2 },
                     shininess: 10,
-                    isCheckerboard: true,
-                    checkerScale: 2 // Skala pola checkerboard
+                    isPlane: true,
+                    gradientScale: 2.0, // Untuk pola lantai
+                    // Untuk pola checkerboard (jika diinginkan, lihat catatan di bawah)
+                    // checkerSize: 0.5
                 }
             };
 
-            const sceneObjects = [sphere1, sphere2, floorPlane];
-            const backgroundColor = { r: 135, g: 206, b: 250 };
+            const sceneObjects = [sphere1, sphere2, plane];
+            const backgroundColor = { r: 135, g: 206, b: 250 }; // Langit biru
 
             // --- Fungsi Ray-Sphere Intersection ---
             function intersectSphere(rayOrigin, rayDirection, sphere) {
@@ -135,6 +145,7 @@
                 } else {
                     const t1 = (-b - Math.sqrt(discriminant)) / (2.0 * a);
                     const t2 = (-b + Math.sqrt(discriminant)) / (2.0 * a);
+                    const epsilon = 0.0001;
                     if (t1 > epsilon && (t2 <= epsilon || t1 < t2)) return t1;
                     if (t2 > epsilon) return t2;
                     return null;
@@ -143,13 +154,17 @@
 
             // --- Fungsi Ray-Plane Intersection ---
             function intersectPlane(rayOrigin, rayDirection, plane) {
-                const denominator = dot(rayDirection, plane.normal);
-                // Jika ray paralel dengan plane (atau di dalam plane)
-                if (Math.abs(denominator) < epsilon) {
+                const DdotN = dot(rayDirection, plane.normal);
+                const epsilon = 1e-6;
+
+                if (Math.abs(DdotN) < epsilon) {
                     return null;
                 }
-                const t = dot(subtract(plane.point, rayOrigin), plane.normal) / denominator;
-                return (t > epsilon) ? t : null;
+                const t = dot(subtract(plane.point, rayOrigin), plane.normal) / DdotN;
+                if (t > epsilon) {
+                    return t;
+                }
+                return null;
             }
 
 
@@ -158,13 +173,11 @@
                 const imageData = ctx.createImageData(width, height);
                 const data = imageData.data;
 
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        // Mengubah koordinat piksel canvas ke koordinat viewport
-                        // Asumsi viewport ada di z=0, kamera di z=-N
-                        const viewportX = (2 * (x + 0.5) / width - 1.0) * (width / height); // Aspect ratio correction
-                        const viewportY = (1.0 - 2 * (y + 0.5) / height);
-                        const pixelPosWorld = { x: viewportX, y: viewportY, z: camera.origin.z + 1 }; // View plane 1 unit di depan kamera
+                for (let y_canvas = 0; y_canvas < height; y_canvas++) {
+                    for (let x_canvas = 0; x_canvas < width; x_canvas++) {
+                        const viewportX = (2 * (x_canvas + 0.5) / width - 1.0);
+                        const viewportY = (1.0 - 2 * (y_canvas + 0.5) / height);
+                        const pixelPosWorld = { x: viewportX, y: viewportY, z: 0 };
                         const rayDirection = normalize(subtract(pixelPosWorld, camera.origin));
 
                         let closestT = Infinity;
@@ -172,10 +185,10 @@
 
                         for (const object of sceneObjects) {
                             let t = null;
-                            if (object.type === 'sphere') {
-                                t = intersectSphere(camera.origin, rayDirection, object);
-                            } else if (object.type === 'plane') {
+                            if (object.material.isPlane) {
                                 t = intersectPlane(camera.origin, rayDirection, object);
+                            } else if (object.radius !== undefined) {
+                                t = intersectSphere(camera.origin, rayDirection, object);
                             }
 
                             if (t !== null && t < closestT) {
@@ -189,63 +202,43 @@
                         if (hitObject !== null) {
                             const material = hitObject.material;
                             const hitPoint = add(camera.origin, multiplyScalar(rayDirection, closestT));
-                            
-                            let surfaceNormal;
-                            let actualDiffuseColor;
 
-                            if (hitObject.type === 'sphere') {
-                                surfaceNormal = normalize(subtract(hitPoint, hitObject.center));
-                                actualDiffuseColor = material.diffuseColor;
-                            } else if (hitObject.type === 'plane') {
-                                surfaceNormal = hitObject.normal;
-                                if (material.isCheckerboard) {
-                                    const u = Math.floor(hitPoint.x * material.checkerScale);
-                                    const v = Math.floor(hitPoint.z * material.checkerScale);
-                                    if ((u + v) % 2 === 0) {
-                                        actualDiffuseColor = material.color1;
-                                    } else {
-                                        actualDiffuseColor = material.color2;
-                                    }
-                                } else {
-                                    actualDiffuseColor = material.diffuseColor; // Fallback jika bukan checkerboard
-                                }
+                            let objectNormal;
+                            let effectiveDiffuseColor;
+
+                            if (material.isPlane) {
+                                objectNormal = hitObject.normal;
+                                // Pola gradasi lantai (seperti sebelumnya)
+                                let factor = hitPoint.x / material.gradientScale;
+                                factor = factor - Math.floor(factor); // Hasilnya selalu [0, 1)
+                                effectiveDiffuseColor = lerpColor(material.color1, material.color2, factor);
+
+                                // Alternatif: Pola Checkerboard untuk lantai (jika diinginkan)
+                                // const checkerSize = material.checkerSize || 0.5;
+                                // const cx = Math.floor(hitPoint.x / checkerSize);
+                                // const cz = Math.floor(hitPoint.z / checkerSize);
+                                // if ((cx + cz) % 2 === 0) {
+                                //     effectiveDiffuseColor = material.color1;
+                                // } else {
+                                //     effectiveDiffuseColor = material.color2;
+                                // }
+
+                            } else { // Ini adalah bola
+                                objectNormal = normalize(subtract(hitPoint, hitObject.center));
+                                effectiveDiffuseColor = material.diffuseColor;
                             }
 
+                            const normal = objectNormal;
                             const viewDir = normalize(subtract(camera.origin, hitPoint));
-                            const lightDir = light.direction; // Ingat, ini arah MENJAUHI sumber cahaya
+                            const lightDir = light.direction;
 
-                            // --- Shadow Calculation ---
-                            let shadowFactor = 1.0; // 1.0 = tidak ada bayangan, 0.0 = bayangan penuh
-                            const shadowRayOrigin = add(hitPoint, multiplyScalar(surfaceNormal, epsilon * 10)); // Offset sedikit
-                            const shadowRayDirection = lightDir;
-
-                            for (const otherObject of sceneObjects) {
-                                if (otherObject === hitObject) continue; // Jangan cek self-shadowing dengan objek yg sama (meski epsilon harusnya menangani)
-
-                                let tShadow = null;
-                                if (otherObject.type === 'sphere') {
-                                    tShadow = intersectSphere(shadowRayOrigin, shadowRayDirection, otherObject);
-                                } else if (otherObject.type === 'plane') {
-                                    tShadow = intersectPlane(shadowRayOrigin, shadowRayDirection, otherObject);
-                                }
-                                
-                                // Untuk directional light, setiap t_shadow > 0 berarti terhalang
-                                if (tShadow !== null && tShadow > epsilon) {
-                                    shadowFactor = 0.2; // Atau 0.0 untuk bayangan keras, 0.2 untuk sedikit cahaya ambient di bayangan
-                                    break; 
-                                }
-                            }
-                            // --- End Shadow Calculation ---
-
-                            const ambient = multiplyColors(ambientLight, actualDiffuseColor);
-                            
-                            const diffuseIntensity = Math.max(0.0, dot(surfaceNormal, lightDir));
-                            const diffuse = scaleColor(multiplyColors(light.color, actualDiffuseColor), diffuseIntensity * shadowFactor);
-
+                            const ambient = multiplyColors(ambientLight, effectiveDiffuseColor);
+                            const diffuseIntensity = Math.max(0.0, dot(normal, lightDir));
+                            const diffuse = scaleColor(multiplyColors(light.color, effectiveDiffuseColor), diffuseIntensity);
                             const halfwayDir = normalize(add(lightDir, viewDir));
-                            const specAngle = Math.max(0.0, dot(surfaceNormal, halfwayDir));
+                            const specAngle = Math.max(0.0, dot(normal, halfwayDir));
                             const specularIntensity = Math.pow(specAngle, material.shininess);
-                            const specular = scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity * shadowFactor);
+                            const specular = scaleColor(multiplyColors(light.color, material.specularColor), specularIntensity);
 
                             let combinedColor = addColors(ambient, addColors(diffuse, specular));
                             combinedColor = clampColor(combinedColor, 0.0, 1.0);
@@ -257,7 +250,7 @@
                             };
                         }
 
-                        const index = (y * width + x) * 4;
+                        const index = (y_canvas * width + x_canvas) * 4;
                         data[index]     = finalColor.r;
                         data[index + 1] = finalColor.g;
                         data[index + 2] = finalColor.b;
